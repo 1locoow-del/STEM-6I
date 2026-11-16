@@ -1,0 +1,210 @@
+/* STEM 6 PHOTO AND VIDEO GALLERY */
+const SUPABASE_URL = "https://firvfolvuknumjpmutyf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_LqNmenRwQ3rwk_LfOZc3Bg_3wdqD7fv";
+const BUCKET = "class-photos";
+
+const API_HEADERS = {
+  apikey: SUPABASE_KEY,
+  Authorization: "Bearer " + SUPABASE_KEY
+};
+
+const dialog = document.getElementById("uploadDialog");
+const grid = document.getElementById("galleryGrid");
+const status = document.getElementById("status");
+
+let allPhotos = [];
+
+function openUpload() {
+  if (!dialog) return;
+  status.textContent = "";
+  dialog.showModal();
+}
+
+/* FIXED UPLOAD BUTTON */
+["topUpload", "uploadBtn"].forEach(id => {
+  const button = document.getElementById(id);
+  if (button) {
+    button.addEventListener("click", openUpload);
+  }
+});
+
+document.getElementById("closeBtn").onclick = () => {
+  dialog.close();
+};
+
+function publicUrl(path) {
+  return SUPABASE_URL +
+    "/storage/v1/object/public/" +
+    BUCKET + "/" +
+    path.split("/").map(encodeURIComponent).join("/");
+}
+function draw(filter = "All") {
+  grid.innerHTML = "";
+
+  const photos = allPhotos.filter(p =>
+    filter === "All" || p.category === filter
+  );
+
+  if (!photos.length) {
+    grid.innerHTML =
+      '<div class="empty">No photos in this section yet.</div>';
+    return;
+  }
+
+  photos.forEach(p => {
+    const el = document.createElement("article");
+    el.className = "photo";
+
+    let media;
+
+    if (/\.mp4$/i.test(p.name)) {
+      media = document.createElement("video");
+      media.controls = true;
+      media.preload = "metadata";
+      media.playsInline = true;
+    } else {
+      media = document.createElement("img");
+      media.alt = "Class memory";
+      media.loading = "lazy";
+    }
+
+    media.src = p.url;
+    el.appendChild(media);
+    grid.appendChild(el);
+  });
+
+  if (typeof renderYearbook === "function") {
+    renderYearbook();
+  }
+}
+
+document.querySelectorAll("[data-filter]").forEach(button => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-filter]")
+      .forEach(b => b.classList.remove("active"));
+
+    button.classList.add("active");
+    draw(button.dataset.filter);
+  });
+});
+async function load() {
+  grid.innerHTML =
+    '<div class="empty">Loading class photos...</div>';
+
+  try {
+    const response = await fetch(
+      SUPABASE_URL + "/storage/v1/object/list/" + BUCKET,
+      {
+        method: "POST",
+        headers: {
+          ...API_HEADERS,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          prefix: "",
+          limit: 100,
+          offset: 0,
+          sortBy: {
+            column: "created_at",
+            order: "desc"
+          }
+        })
+      }
+    );
+
+    const raw = await response.text();
+
+    if (!response.ok) {
+      throw new Error(raw);
+    }
+
+    const objects = JSON.parse(raw);
+
+    allPhotos = objects
+      .filter(o => o && o.name)
+      .filter(o => /\.(jpg|jpeg|png|webp|gif|mp4)$/i.test(o.name))
+      .map(o => ({
+        name: o.name,
+        url: publicUrl(o.name),
+        caption: "",
+        category: "Classroom"
+      }));
+
+    draw();
+
+  } catch (error) {
+    grid.innerHTML =
+      '<div class="empty">Gallery error: ' +
+      String(error.message || error) +
+      '</div>';
+  }
+}
+document.getElementById("uploadForm")
+.addEventListener("submit", async e => {
+  e.preventDefault();
+
+  const file = document.getElementById("photoFile").files[0];
+  const btn = document.getElementById("submitBtn");
+
+  if (!file) {
+    status.textContent = "Choose a photo or video first.";
+    return;
+  }
+
+  if (file.size > 50 * 1024 * 1024) {
+    status.textContent = "File must be under 50 MB.";
+    return;
+  }
+
+  if (!(file.type.startsWith("image/") ||
+        file.type === "video/mp4")) {
+    status.textContent = "Invalid file type.";
+    return;
+  }
+
+  const ext = file.name.split(".").pop().toLowerCase();
+  const unique = Date.now() + "-" +
+    Math.random().toString(36).slice(2);
+  const path = unique + "." + ext;
+
+  btn.disabled = true;
+  btn.textContent = "Uploading...";
+  status.textContent = "Uploading your file...";
+
+  try {
+    const response = await fetch(
+      SUPABASE_URL + "/storage/v1/object/" +
+      BUCKET + "/" + encodeURIComponent(path),
+      {
+        method: "POST",
+        headers: {
+          ...API_HEADERS,
+          "Content-Type": file.type,
+          "x-upsert": "false"
+        },
+        body: file
+      }
+    );
+
+    const raw = await response.text();
+
+    if (!response.ok) throw new Error(raw);
+
+    await load();
+
+    status.textContent = "Upload successful!";
+    e.target.reset();
+
+    setTimeout(() => dialog.close(), 900);
+
+  } catch (error) {
+    status.textContent =
+      "UPLOAD ERROR: " + error.message;
+
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Upload media";
+  }
+});
+
+load();
